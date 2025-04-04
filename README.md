@@ -1,7 +1,7 @@
 
 # NopeWare
 
-<img src="https://socialify.git.ci/PavinDas/VirusScanner/image?description=1&font=KoHo&language=1&name=1&owner=1&pattern=Solid&theme=Dark" alt="VirusScanner" width="640" height="320" />
+<img src="https://socialify.git.ci/PavinDas/NopeWare/image?description=1&font=KoHo&language=1&name=1&owner=1&pattern=Solid&theme=Dark" alt="VirusScanner" width="640" height="320" />
 
 This script allows you to upload a file to VirusTotal for analysis and retrieve the results using their API. It uses Python libraries requests, json, and colorama for handling HTTP requests, JSON parsing, and colored console output, respectively.
 
