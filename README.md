@@ -1,5 +1,5 @@
 
-# Virus Scanner
+# NopeWare
 
 <img src="https://socialify.git.ci/PavinDas/VirusScanner/image?description=1&font=KoHo&language=1&name=1&owner=1&pattern=Solid&theme=Dark" alt="VirusScanner" width="640" height="320" />
 
@@ -47,11 +47,11 @@ Save your API key in a file named api-key.txt in the same directory as the scrip
 
 **1.** Initialize the script:
 ```bash
-https://github.com/PavinDas/VirusScanner.git
+https://github.com/PavinDas/NopeWare.git
 ```
 **2.** Open script folder:
 ```bash
-cd VirusScanner
+cd NopeWare
 ```
 
 **3.** Give execution permission:

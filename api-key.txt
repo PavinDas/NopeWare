@@ -1,1 +1,1 @@
-Insert your VirusTotal API key here
+d77805f5be2abf76d482f90f7b679fe7a8180f4c3fed6fa1f9ea470e616d502d

@@ -1,12 +1,15 @@
 import requests
 import json
+import re
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from time import sleep
 
 # VirusTotal API settings
-VT_SCAN_URL = "https://www.virustotal.com/vtapi/v2/file/scan"
-VT_ANALYSIS_URL = "https://www.virustotal.com/api/v3/files/"
+VT_FILE_SCAN_URL = "https://www.virustotal.com/vtapi/v2/file/scan"
+VT_FILE_ANALYSIS_URL = "https://www.virustotal.com/api/v3/files/"
+VT_URL_SCAN_URL = "https://www.virustotal.com/vtapi/v2/url/scan"
+VT_URL_ANALYSIS_URL = "https://www.virustotal.com/api/v3/urls/"
 with open('api-key.txt', 'r') as f:
     API_KEY = f.read().strip()
 
@@ -14,14 +17,143 @@ with open('api-key.txt', 'r') as f:
 with open('bot-token.txt', 'r') as f:
     TOKEN = f.read().strip()
 
+# Helper function to detect if text is a hash (MD5, SHA1, SHA256)
+def is_hash(text: str) -> bool:
+    # MD5: 32 chars, SHA1: 40 chars, SHA256: 64 chars (hexadecimal)
+    hash_patterns = [
+        r'^[0-9a-fA-F]{32}$',  # MD5
+        r'^[0-9a-fA-F]{40}$',  # SHA1
+        r'^[0-9a-fA-F]{64}$'   # SHA256
+    ]
+    return any(re.match(pattern, text) for pattern in hash_patterns)
+
+# Helper function to detect if text is a URL
+def is_url(text: str) -> bool:
+    url_pattern = r'^(https?://)?([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(/.*)?$'
+    return bool(re.match(url_pattern, text))
+
+# Function to format and send analysis results
+async def send_analysis_results(message, report, name, descp=None, size=None, hash_value=None):
+    output = f"Name: {name}\n"
+    if size:
+        output += f"Size: {size} KB\n"
+    if descp:
+        output += f"Description: {descp}\n"
+    if hash_value:
+        output += f"Hash: {hash_value}\n"
+
+    # Extract results
+    if "data" in report and "attributes" in report["data"]:
+        result = report["data"]["attributes"].get("last_analysis_results", {})
+        malicious_count = 0
+        for key, values in result.items():
+            verdict = values['category']
+            if verdict == 'undetected':
+                verdict = 'undetected'
+            elif verdict == 'type-unsupported':
+                verdict = 'type-unsupported'
+            elif verdict == 'malicious':
+                malicious_count += 1
+                verdict = 'malicious'
+                output += f"\n{key}: {verdict}\n"
+            else:
+                verdict = verdict
+
+        if malicious_count != 0:
+            output += f"\n\t\t\t\t According to {malicious_count} antiviruses, this file is malicious !!"
+        else:
+            output += f"\n\t\t\t\t This is all clear – no malicious behavior to worry about !!"
+
+        # Add VirusTotal link for manual verification
+        hash_key = hash_value if hash_value else report["data"]["attributes"].get("sha256", "")
+        if hash_key:
+            vt_link = f"https://www.virustotal.com/gui/file/{hash_key}"
+            output += f"\n\nVerify manually: {vt_link}"
+    else:
+        output += "\nNo analysis results available."
+
+    await message.reply_text(output)
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Welcome to VirusTotal Scanner Bot!\n"
-        "Send a file to scan it with VirusTotal.\n\n"
-        "Developed by: Your Name\n"
+        "Welcome to NopeWare Scanner Bot!\n"
+        "I can scan:\n- Files: Send any file\n- Hashes: Send MD5, SHA1, or SHA256 hash\n- URLs: Send a URL\n\n"
+        "Developed by: @pavin_das\n"
         "GitHub: PavinDas\n"
         "Instagram: pavin__das"
     )
+
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.message
+    text = message.text.strip()
+
+    # Check if the text is a hash
+    if is_hash(text):
+        await message.reply_text("Detected a hash. Analyzing...")
+        headers = {"accept": "application/json", "x-apikey": API_KEY}
+        file_url = f"{VT_FILE_ANALYSIS_URL}{text}"
+
+        # Retry mechanism
+        max_attempts = 5
+        attempt = 0
+        while attempt < max_attempts:
+            response = requests.get(file_url, headers=headers)
+            report = json.loads(response.text)
+            if "data" in report and "attributes" in report["data"]:
+                stats = report["data"]["attributes"].get("last_analysis_stats", {})
+                total_scans = sum(stats.values())
+                if total_scans > 10:
+                    break
+            sleep(15)
+            attempt += 1
+            await message.reply_text(f"Still analyzing... (Attempt {attempt + 1}/{max_attempts})")
+
+        if attempt >= max_attempts:
+            await message.reply_text("Analysis timed out. Please try again later.")
+            return
+
+        await send_analysis_results(message, report, name=f"Hash: {text}", hash_value=text)
+
+    # Check if the text is a URL
+    elif is_url(text):
+        await message.reply_text("Detected a URL. Analyzing...")
+        params = {"apikey": API_KEY, "url": text}
+        response = requests.post(VT_URL_SCAN_URL, data=params)
+        scan_response = response.json()
+        
+        if "scan_id" not in scan_response:
+            await message.reply_text("Failed to scan URL. Please try again.")
+            return
+
+        # Extract URL ID for analysis (base64 encoded URL)
+        import base64
+        url_id = base64.urlsafe_b64encode(text.encode()).decode().rstrip("=")
+        analysis_url = f"{VT_URL_ANALYSIS_URL}{url_id}"
+        headers = {"accept": "application/json", "x-apikey": API_KEY}
+
+        # Retry mechanism
+        max_attempts = 5
+        attempt = 0
+        while attempt < max_attempts:
+            response = requests.get(analysis_url, headers=headers)
+            report = json.loads(response.text)
+            if "data" in report and "attributes" in report["data"]:
+                stats = report["data"]["attributes"].get("last_analysis_stats", {})
+                total_scans = sum(stats.values())
+                if total_scans > 10:
+                    break
+            sleep(15)
+            attempt += 1
+            await message.reply_text(f"Still analyzing... (Attempt {attempt + 1}/{max_attempts})")
+
+        if attempt >= max_attempts:
+            await message.reply_text("Analysis timed out. Please try again later.")
+            return
+
+        await send_analysis_results(message, report, name=f"URL: {text}")
+
+    else:
+        await message.reply_text("Please send a valid hash (MD5, SHA1, SHA256) or URL.")
 
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
@@ -44,10 +176,10 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     params = {"apikey": API_KEY}
     with open(file_path, "rb") as f:
         file_to_upload = {"file": f}
-        response = requests.post(VT_SCAN_URL, files=file_to_upload, params=params)
+        response = requests.post(VT_FILE_SCAN_URL, files=file_to_upload, params=params)
     
     sha1 = response.json()['sha1']
-    file_url = f"{VT_ANALYSIS_URL}{sha1}"
+    file_url = f"{VT_FILE_ANALYSIS_URL}{sha1}"
     headers = {"accept": "application/json", "x-apikey": API_KEY}
 
     # Retry mechanism to ensure analysis completes
@@ -60,9 +192,9 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if "data" in report and "attributes" in report["data"]:
             stats = report["data"]["attributes"].get("last_analysis_stats", {})
             total_scans = sum(stats.values())
-            if total_scans > 10:  # Wait until reasonable number of scans complete
+            if total_scans > 10:
                 break
-        sleep(15)  # Wait 15 seconds between attempts
+        sleep(15)
         attempt += 1
         await message.reply_text(f"Still analyzing... (Attempt {attempt + 1}/{max_attempts})")
 
@@ -75,39 +207,8 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     hash = report["data"]["attributes"]["sha256"]
     descp = report["data"]["attributes"]["type_description"]
     size = report["data"]["attributes"]["size"] * 10**-3
-    result = report["data"]["attributes"]["last_analysis_results"]
 
-    # Build the complete output as a single string
-    output = f"Name: {name}\n"
-    output += f"Size: {size} KB\n"
-    output += f"Description: {descp}\n"
-    output += f"SHA-256 Hash: {hash}\n\n"
-
-    malicious_count = 0
-    for key, values in result.items():
-        verdict = values['category']
-        if verdict == 'undetected':
-            verdict = 'undetected'
-        elif verdict == 'type-unsupported':
-            verdict = 'type-unsupported'
-        elif verdict == 'malicious':
-            malicious_count += 1
-            verdict = 'malicious'
-        else:
-            verdict = verdict
-        output += f"{key}: {verdict}\n"
-
-    if malicious_count != 0:
-        output += f"\n\t\t\t\t{malicious_count} antivirus found the given file malicious !!"
-    else:
-        output += f"\n\t\t\t\t No antivirus found the given file malicious !!"
-
-    # Add VirusTotal link for manual verification
-    vt_link = f"https://www.virustotal.com/gui/file/{hash}"
-    output += f"\n\nVerify manually: {vt_link}"
-
-    # Send the complete output as a single message
-    await message.reply_text(output)
+    await send_analysis_results(message, report, name=name, descp=descp, size=size, hash_value=hash)
 
     # Cleanup
     import os
@@ -119,6 +220,7 @@ def main():
     
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.Document.ALL, handle_file))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     
     print("Bot is running...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
